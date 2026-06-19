@@ -9,9 +9,6 @@ from flask import (
     session,
 )
 from markupsafe import Markup
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from dotenv import load_dotenv
 import os
 import markdown
@@ -22,6 +19,18 @@ import re
 import sqlite3
 import urllib.parse
 import functools
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain.prompts import PromptTemplate
+    from langchain.chains import LLMChain
+
+    LANGCHAIN_AVAILABLE = True
+except Exception:
+    ChatGoogleGenerativeAI = None
+    PromptTemplate = None
+    LLMChain = None
+    LANGCHAIN_AVAILABLE = False
 
 # Create the templates directory if it doesn't exist
 templates_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -40,10 +49,10 @@ yt_api_key = os.getenv("YT_API_KEY")
 app.secret_key = os.getenv("SECRET_KEY", "default-secret-key-for-dev")
 
 if not google_api_key:
-    raise ValueError("GOOGLE_API_KEY not found in .env file")
+    print("GOOGLE_API_KEY not configured; AI roadmap generation will use fallbacks.")
 
 if not yt_api_key:
-    raise ValueError("YT_API_KEY not found in .env file")
+    print("YT_API_KEY not configured; YouTube integration will use public scraping fallback.")
 
 # Define the prompt template with more explicit instructions for JSON format
 PROMPT_TEMPLATE = """ 
@@ -163,15 +172,19 @@ response_json = {
 }
 
 # Create the PromptTemplate for both roadmap and quiz
-prompt = PromptTemplate(
-    template=PROMPT_TEMPLATE,
-    input_variables=["text_content"],
-)
+if LANGCHAIN_AVAILABLE:
+    prompt = PromptTemplate(
+        template=PROMPT_TEMPLATE,
+        input_variables=["text_content"],
+    )
 
-quiz_prompt = PromptTemplate(
-    template=QUIZ_TEMPLATE,
-    input_variables=["text_content", "response_json"],
-)
+    quiz_prompt = PromptTemplate(
+        template=QUIZ_TEMPLATE,
+        input_variables=["text_content", "response_json"],
+    )
+else:
+    prompt = None
+    quiz_prompt = None
 
 
 def escape_json_string(json_string):
@@ -186,6 +199,11 @@ def escape_json_string(json_string):
 
 def generate_quiz(text_content):
     """Generate a quiz based on the given subject"""
+    if not LANGCHAIN_AVAILABLE or not google_api_key:
+        return {
+            "error": "AI quiz generation is unavailable because the required service configuration is missing."
+        }
+
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
         temperature=0,
@@ -225,6 +243,9 @@ def generate_quiz(text_content):
 
 # Function to generate roadmap
 def generate_roadmap(text_content):
+    if not LANGCHAIN_AVAILABLE or not google_api_key:
+        return "Error generating roadmap: Google AI credentials are not configured"
+
     # Initialize the Google Generative AI model
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
